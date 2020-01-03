@@ -6,6 +6,7 @@ import (
     "github.com/streadway/amqp"
     "sync"
     "time"
+    "fmt"
 )
 
 type CConnect struct {
@@ -39,11 +40,13 @@ func (self *CConnect) init() {
                 ** 与rabbitmq断开连接
                 */
                 self.pool.connOnClose(self)
+                break
             case <-self.timer.C:
                 /*
                 ** 一定时间内没有被使用
                 */
                 self.pool.connOnClose(self)
+                break
             }
         }
     }(self)
@@ -55,6 +58,7 @@ func (self *CConnect) ResetTimer() {
 
 func (self *CConnect) TakeChannel() (*CChannel, error) {
     freeCount := self.freeChannels.Len()
+    fmt.Println(self.total, freeCount)
     if freeCount == 0 {
         /*
         ** 空闲队列中不存在channel
@@ -107,6 +111,9 @@ func (self *CConnect) TakeChannel() (*CChannel, error) {
         */
         self.freeChanMutex.Lock()
         channelElem := self.freeChannels.Front()
+        if channelElem == nil {
+            return nil, errors.New("element is nil")
+        }
         channel := channelElem.Value.(*CChannel)
         channel.ResetTimer()
         self.freeChannels.Remove(channelElem)
@@ -140,6 +147,14 @@ func (self *CConnect) onChannelClose(c *CChannel) {
     self.totalOpt(func(total *int) {
         *total -= 1
     })
+    for e := self.freeChannels.Front(); e != nil; e = e.Next() {
+        if e.Value.(*CChannel) == c {
+            self.freeChanMutex.Lock()
+            self.freeChannels.Remove(e)
+            self.freeChanMutex.Unlock()
+            break
+        }
+    }
     self.pool.addConnToFree(self)
 }
 

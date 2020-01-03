@@ -19,15 +19,19 @@ func (self *CChannel) init() {
         for {
             select {
             case <-self.closeNotify:
+                // fmt.Println("channel close")
                 self.conn.onChannelClose(self)
+                break
             case <-self.timer.C:
                 self.conn.onChannelClose(self)
+                break
             }
         }
     }(self)
 }
 
 func (self *CChannel) ResetTimer() {
+    // fmt.Println("reset timer ...................................", self.channelTimeout)
     self.timer.Reset(self.channelTimeout)
 }
 

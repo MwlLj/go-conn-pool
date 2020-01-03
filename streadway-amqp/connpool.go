@@ -33,10 +33,14 @@ type CAmqpConnPool struct {
     channelTimeout time.Duration
     createConnectCb CreateConnectCb
     createChannelCb CreateChannelCb
+    connMutex sync.Mutex
 }
 
 func (self *CAmqpConnPool) TakeConn() (*CConnect, error) {
+    self.connMutex.Lock()
+    defer self.connMutex.Unlock()
     freeCount := self.freeConns.Len()
+    // fmt.Println(self.total, freeCount)
     if freeCount == 0 {
         /*
         ** 空闲队列中不存在连接
@@ -44,7 +48,7 @@ func (self *CAmqpConnPool) TakeConn() (*CConnect, error) {
         **      大于等于最大值 => 返回错误
         **      小于最大值 => 创建连接
         */
-        if self.total >= self.max {
+        if self.total > self.max {
             /*
             ** 返回错误
             */
@@ -54,6 +58,7 @@ func (self *CAmqpConnPool) TakeConn() (*CConnect, error) {
             ** 1. 创建连接, 将total加1
             ** 2. 放入到空闲队列中
             */
+            // fmt.Println(self.total, freeCount, "############")
             c, err := amqp.Dial(*self.url)
             if err != nil {
                 return nil, err
@@ -91,6 +96,19 @@ func (self *CAmqpConnPool) TakeConn() (*CConnect, error) {
             i += 1
         }
         return nil, errors.New("rand get conn error")
+    }
+}
+
+func (self *CAmqpConnPool) Close() {
+    for e := self.freeConns.Front(); e != nil; e = e.Next() {
+        e.Value.(*CConnect).close()
+    }
+    for {
+        e := self.freeConns.Front()
+        if e == nil {
+            break
+        }
+        self.freeConns.Remove(e)
     }
 }
 
@@ -141,10 +159,10 @@ func (self *CAmqpConnPool) addConnToFree(conn *CConnect) {
     */
     for e := self.freeConns.Front(); e != nil; e = e.Next() {
         if e.Value.(*CConnect) == conn {
-            self.freeConns.PushBack(conn)
-            break
+            return
         }
     }
+    self.freeConns.PushBack(conn)
 }
 
 func (self *CAmqpConnPool) totalOpt(f func(total *int)) {

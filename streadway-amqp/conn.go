@@ -9,6 +9,8 @@ import (
     "fmt"
 )
 
+var _ = fmt.Println
+
 type CConnect struct {
     pool *CAmqpConnPool
     max int
@@ -22,6 +24,8 @@ type CConnect struct {
     connTimeout time.Duration
     channelTimeout time.Duration
     createChannelCb CreateChannelCb
+    channelMutex sync.Mutex
+    exit chan bool
 }
 
 func (self *CConnect) init() {
@@ -47,9 +51,26 @@ func (self *CConnect) init() {
                 */
                 self.pool.connOnClose(self)
                 break
+            case <-self.exit:
+                break
             }
         }
     }(self)
+}
+
+func (self *CConnect) close() {
+    for e := self.freeChannels.Front(); e != nil; e = e.Next() {
+        e.Value.(*CChannel).close()
+    }
+    self.conn.Close()
+    for {
+        e := self.freeChannels.Front()
+        if e == nil {
+            break
+        }
+        self.freeChannels.Remove(e)
+    }
+    self.exit <- true
 }
 
 func (self *CConnect) ResetTimer() {
@@ -57,8 +78,10 @@ func (self *CConnect) ResetTimer() {
 }
 
 func (self *CConnect) TakeChannel() (*CChannel, error) {
+    self.channelMutex.Lock()
+    defer self.channelMutex.Unlock()
     freeCount := self.freeChannels.Len()
-    fmt.Println(self.total, freeCount)
+    // fmt.Println(self.total, freeCount)
     if freeCount == 0 {
         /*
         ** 空闲队列中不存在channel
@@ -66,7 +89,7 @@ func (self *CConnect) TakeChannel() (*CChannel, error) {
         **      大于等于最大值 => 返回错误
         **      小于最大值 => 创建通道
         */
-        if self.total >= self.max {
+        if self.total > self.max {
             /*
             ** 返回错误
             */
@@ -96,7 +119,7 @@ func (self *CConnect) TakeChannel() (*CChannel, error) {
             ** 此时: 空闲队列中不存在元素, 所以 total 记录的个数是忙碌的个数
             ** 判断是否通知 pool
             */
-            if self.total >= self.max {
+            if self.total > self.max {
                 /*
                 ** 忙碌的个数已经达到极限 => 通知pool
                 */
@@ -175,6 +198,7 @@ func NewConnect(pool *CAmqpConnPool, conn *amqp.Connection, max int, connTimeout
         connTimeout: connTimeout,
         channelTimeout: channelTimeout,
         createChannelCb: createChannelCb,
+        exit: make(chan bool),
     }
     c.init()
     return &c

@@ -11,6 +11,7 @@ type CChannel struct {
     closeNotify chan *amqp.Error
     timer *time.Timer
     channelTimeout time.Duration
+    exit chan bool
 }
 
 func (self *CChannel) init() {
@@ -24,6 +25,8 @@ func (self *CChannel) init() {
                 break
             case <-self.timer.C:
                 self.conn.onChannelClose(self)
+                break
+            case <-self.exit:
                 break
             }
         }
@@ -43,12 +46,18 @@ func (self *CChannel) Close() {
     self.conn.addChannelToFree(self)
 }
 
+func (self *CChannel) close() {
+    self.exit <- true
+    self.channel.Close()
+}
+
 func NewChannel(conn *CConnect, channel *amqp.Channel, timeout time.Duration) *CChannel {
     c := CChannel{
         conn: conn,
         channel: channel,
         timer: time.NewTimer(timeout),
         channelTimeout: timeout,
+        exit: make(chan bool),
     }
     c.init()
     return &c

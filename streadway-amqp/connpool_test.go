@@ -35,13 +35,13 @@ func TestPublish(t *testing.T) {
             for {
                 conn, err := pool.TakeConn()
                 if err != nil {
-                    fmt.Println(err)
+                    fmt.Println("TakeConn, ", err)
                     <-time.After(1 * time.Second)
                     continue
                 }
                 channel, err := conn.TakeChannel()
                 if err != nil {
-                    fmt.Println(err)
+                    fmt.Println("TakeChannel, ", err)
                     <-time.After(1 * time.Second)
                     continue
                 }
@@ -63,7 +63,6 @@ func TestPublish(t *testing.T) {
                 ); err != nil {
                     fmt.Printf("Exchange Publish: %v\n", err)
                 }
-                <-time.After(1 * time.Second)
                 channel.Close()
                 fmt.Println("send success")
                 <-time.After(1 * time.Second)

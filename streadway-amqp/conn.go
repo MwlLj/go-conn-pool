@@ -26,6 +26,8 @@ type CConnect struct {
     createChannelCb CreateChannelCb
     channelMutex sync.Mutex
     exit chan bool
+    isClose bool
+    isCloseMutex sync.Mutex
 }
 
 func (self *CConnect) init() {
@@ -44,15 +46,18 @@ func (self *CConnect) init() {
                 ** 与rabbitmq断开连接
                 */
                 self.pool.connOnClose(self)
-                break
+                self.setIsClose(true)
+                return
             case <-self.timer.C:
                 /*
                 ** 一定时间内没有被使用
                 */
                 self.pool.connOnClose(self)
-                break
+                self.setIsClose(true)
+                return
             case <-self.exit:
-                break
+                self.setIsClose(true)
+                return
             }
         }
     }(self)
@@ -62,7 +67,9 @@ func (self *CConnect) close() {
     for e := self.freeChannels.Front(); e != nil; e = e.Next() {
         e.Value.(*CChannel).close()
     }
-    self.conn.Close()
+    if !self.conn.IsClosed() {
+        self.conn.Close()
+    }
     for {
         e := self.freeChannels.Front()
         if e == nil {
@@ -159,6 +166,9 @@ func (self *CConnect) addChannelToFree(c *CChannel) {
     /*
     ** 通知pool
     */
+    if self.getIsClose() {
+        return
+    }
     self.pool.addConnToFree(self)
 }
 
@@ -178,6 +188,9 @@ func (self *CConnect) onChannelClose(c *CChannel) {
             break
         }
     }
+    if self.getIsClose() {
+        return
+    }
     self.pool.addConnToFree(self)
 }
 
@@ -185,6 +198,18 @@ func (self *CConnect) totalOpt(f func(total *int)) {
     self.totalMutex.Lock()
     defer self.totalMutex.Unlock()
     f(&self.total)
+}
+
+func (self *CConnect) getIsClose() bool {
+    self.isCloseMutex.Lock()
+    defer self.isCloseMutex.Unlock()
+    return self.isClose
+}
+
+func (self *CConnect) setIsClose(isClose bool) {
+    self.isCloseMutex.Lock()
+    defer self.isCloseMutex.Unlock()
+    self.isClose = isClose
 }
 
 func NewConnect(pool *CAmqpConnPool, conn *amqp.Connection, max int, connTimeout time.Duration, channelTimeout time.Duration, createChannelCb CreateChannelCb) *CConnect {

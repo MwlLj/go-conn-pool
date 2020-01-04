@@ -3,6 +3,7 @@ package amqppool
 import (
     "github.com/streadway/amqp"
     "time"
+    "sync"
 )
 
 type CChannel struct {
@@ -12,6 +13,8 @@ type CChannel struct {
     timer *time.Timer
     channelTimeout time.Duration
     exit chan bool
+    isClose bool
+    isCloseMutex sync.Mutex
 }
 
 func (self *CChannel) init() {
@@ -22,12 +25,15 @@ func (self *CChannel) init() {
             case <-self.closeNotify:
                 // fmt.Println("channel close")
                 self.conn.onChannelClose(self)
-                break
+                self.setIsClose(true)
+                return
             case <-self.timer.C:
                 self.conn.onChannelClose(self)
-                break
+                self.setIsClose(true)
+                return
             case <-self.exit:
-                break
+                self.setIsClose(true)
+                return
             }
         }
     }(self)
@@ -43,12 +49,30 @@ func (self *CChannel) Channel() *amqp.Channel {
 }
 
 func (self *CChannel) Close() {
+    if self.getIsClose() {
+        /*
+        ** 此时: 当前channel 刚刚忙碌完毕
+        ** 希望放回到空闲队列中, 但是如果自身已经关闭, 就没有放回空闲队列的价值
+        */
+        return
+    }
     self.conn.addChannelToFree(self)
 }
 
 func (self *CChannel) close() {
     self.exit <- true
-    self.channel.Close()
+}
+
+func (self *CChannel) getIsClose() bool {
+    self.isCloseMutex.Lock()
+    defer self.isCloseMutex.Unlock()
+    return self.isClose
+}
+
+func (self *CChannel) setIsClose(isClose bool) {
+    self.isCloseMutex.Lock()
+    defer self.isCloseMutex.Unlock()
+    self.isClose = isClose
 }
 
 func NewChannel(conn *CConnect, channel *amqp.Channel, timeout time.Duration) *CChannel {
